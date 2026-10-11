@@ -246,7 +246,7 @@ async function checkWeb(name) {
   const { status, text } = await get("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query));
   const blocks = text.split('class="result__a"').slice(1, 11);
   if (status !== 200 || /anomaly|challenge-form/i.test(text)) {
-    return { verdict: "unknown", finding: "The search engine refused the request. Open Google to check.", url: google, items: [] };
+    throw new Error("search refused");
   }
   if (!blocks.length) {
     return { verdict: "available", finding: "A search for the exact name returns no results at all.", url: google, items: [] };
@@ -282,6 +282,13 @@ async function checkWeb(name) {
 
 const CHECKS = { trademark: checkTrademark, company: checkCompany, domains: checkDomains, social: checkSocial, web: checkWeb };
 
+// Pre-filled search pages, offered when a site refuses the automatic check.
+const MANUAL_LINK = {
+  trademark: (n) => "https://www.quickcompany.in/trademarks?q=" + encodeURIComponent(n),
+  company: (n) => "https://www.quickcompany.in/company?q=" + encodeURIComponent(n),
+  web: (n) => "https://www.google.com/search?q=" + encodeURIComponent('"' + n + '"'),
+};
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   if (url.pathname === "/api/check") {
@@ -295,7 +302,17 @@ const server = http.createServer(async (req, res) => {
     try {
       res.end(JSON.stringify(await check(name)));
     } catch (e) {
-      res.end(JSON.stringify({ verdict: "unknown", finding: e.name === "TimeoutError" ? "The site took too long to answer." : e.message, items: [] }));
+      const link = MANUAL_LINK[url.searchParams.get("check")];
+      res.end(
+        JSON.stringify({
+          verdict: link ? "manual" : "unknown",
+          finding: link
+            ? "This site refused the automatic check. Open the search below to see the results yourself."
+            : "The lookup failed. Try again in a minute.",
+          url: link ? link(name) : undefined,
+          items: [],
+        })
+      );
     }
     return;
   }

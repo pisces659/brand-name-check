@@ -240,7 +240,7 @@ const ROWS = {
   social: (i) => row(out(i.url, i.platform), i.handle, i.state, ROW_LABEL),
   web: (i) => row(out(i.url, i.title), i.host, i.uses ? "caution" : "idle", { caution: "Uses the name", idle: "Unrelated" }),
 };
-const MORE = { trademark: "See all results on QuickCompany", company: "See all results on QuickCompany", domains: "Search on GoDaddy", web: "Open the same search on Google" };
+const MORE = { trademark: "Open this search on QuickCompany", company: "Open this search on QuickCompany", domains: "Search on GoDaddy", web: "Open this search on Google" };
 
 function render(id, data) {
   const def = CHECKS.find((c) => c.id === id);
