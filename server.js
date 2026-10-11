@@ -240,31 +240,48 @@ async function checkSocial(name) {
   return { verdict, finding, items };
 }
 
+// First page of results as [{ title, url }], from DuckDuckGo, or Bing when DuckDuckGo does not answer.
+async function searchResults(query) {
+  const q = encodeURIComponent(query);
+  try {
+    const { status, text } = await get("https://html.duckduckgo.com/html/?q=" + q, { timeout: 7000 });
+    if (status === 200 && !/anomaly|challenge-form/i.test(text)) {
+      return text.split('class="result__a"').slice(1, 11).map((b) => {
+        let link = ((b.match(/href="([^"]+)"/) || [])[1] || "").replace(/&amp;/g, "&");
+        const uddg = link.match(/[?&]uddg=([^&]+)/);
+        if (uddg) link = decodeURIComponent(uddg[1]);
+        return { title: decode((b.match(/^[^>]*>([\s\S]*?)<\/a>/) || [])[1] || ""), url: link };
+      });
+    }
+  } catch {}
+  const { status, text } = await get("https://www.bing.com/search?setlang=en&q=" + q, { timeout: 7000 });
+  if (status !== 200) throw new Error("search refused");
+  return text
+    .split('<li class="b_algo"')
+    .slice(1, 11)
+    .map((b) => {
+      const m = b.match(/<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/);
+      return m ? { title: decode(m[2]), url: m[1].replace(/&amp;/g, "&") } : null;
+    })
+    .filter(Boolean);
+}
+
 async function checkWeb(name) {
   const query = `"${name}"`;
   const google = "https://www.google.com/search?q=" + encodeURIComponent(query);
-  const { status, text } = await get("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query), { timeout: 4000 });
-  const blocks = text.split('class="result__a"').slice(1, 11);
-  if (status !== 200 || /anomaly|challenge-form/i.test(text)) {
-    throw new Error("search refused");
-  }
-  if (!blocks.length) {
+  const found = await searchResults(query);
+  if (!found.length) {
     return { verdict: "available", finding: "A search for the exact name returns no results at all.", url: google, items: [] };
   }
 
   const wanted = norm(name);
-  const items = blocks.map((b) => {
-    const title = decode((b.match(/^[^>]*>([\s\S]*?)<\/a>/) || [])[1] || "");
-    const raw = (b.match(/href="([^"]+)"/) || [])[1] || "";
-    let link = raw.replace(/&amp;/g, "&");
-    const uddg = link.match(/[?&]uddg=([^&]+)/);
-    if (uddg) link = decodeURIComponent(uddg[1]);
+  const items = found.map((r) => {
     let host = "";
     try {
-      host = new URL(link).hostname.replace(/^www\./, "");
+      host = new URL(r.url).hostname.replace(/^www\./, "");
     } catch {}
-    const uses = norm(title).includes(wanted) || norm(host.split(".")[0]).includes(wanted);
-    return { title, url: link, host, uses };
+    const uses = norm(r.title).includes(wanted) || norm(host.split(".")[0]).includes(wanted);
+    return { ...r, host, uses };
   });
 
   const users = items.filter((i) => i.uses).length;
@@ -290,6 +307,7 @@ const MANUAL_LINK = {
 };
 
 const refusedUntil = {};
+const failures = {};
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
@@ -303,12 +321,15 @@ const server = http.createServer(async (req, res) => {
     }
     const id = url.searchParams.get("check");
     try {
-      // A site that just refused is not asked again for ten minutes, so visitors are not kept waiting.
+      // A site that refused twice in a row is not asked again for ten minutes, so visitors are not kept waiting.
       if (refusedUntil[id] > Date.now()) throw new Error("recently refused");
-      res.end(JSON.stringify(await check(name)));
+      const result = await check(name);
+      failures[id] = 0;
+      res.end(JSON.stringify(result));
     } catch (e) {
       const link = MANUAL_LINK[id];
-      if (link) refusedUntil[id] = Date.now() + 10 * 60 * 1000;
+      failures[id] = (failures[id] || 0) + 1;
+      if (link && failures[id] >= 2 && !(refusedUntil[id] > Date.now())) refusedUntil[id] = Date.now() + 10 * 60 * 1000;
       res.end(
         JSON.stringify({
           verdict: link ? "manual" : "unknown",
