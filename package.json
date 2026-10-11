@@ -1,0 +1,9 @@
+{
+  "name": "brand-name-search",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Checks a brand name against trademarks, company registrations, domains, social handles and web search.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
