@@ -243,7 +243,7 @@ async function checkSocial(name) {
 async function checkWeb(name) {
   const query = `"${name}"`;
   const google = "https://www.google.com/search?q=" + encodeURIComponent(query);
-  const { status, text } = await get("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query));
+  const { status, text } = await get("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query), { timeout: 4000 });
   const blocks = text.split('class="result__a"').slice(1, 11);
   if (status !== 200 || /anomaly|challenge-form/i.test(text)) {
     throw new Error("search refused");
@@ -289,6 +289,8 @@ const MANUAL_LINK = {
   web: (n) => "https://www.google.com/search?q=" + encodeURIComponent('"' + n + '"'),
 };
 
+const refusedUntil = {};
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   if (url.pathname === "/api/check") {
@@ -299,10 +301,14 @@ const server = http.createServer(async (req, res) => {
       res.statusCode = 400;
       return res.end(JSON.stringify({ error: "Enter a name with at least two letters or digits." }));
     }
+    const id = url.searchParams.get("check");
     try {
+      // A site that just refused is not asked again for ten minutes, so visitors are not kept waiting.
+      if (refusedUntil[id] > Date.now()) throw new Error("recently refused");
       res.end(JSON.stringify(await check(name)));
     } catch (e) {
-      const link = MANUAL_LINK[url.searchParams.get("check")];
+      const link = MANUAL_LINK[id];
+      if (link) refusedUntil[id] = Date.now() + 10 * 60 * 1000;
       res.end(
         JSON.stringify({
           verdict: link ? "manual" : "unknown",
